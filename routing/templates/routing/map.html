@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fuel Route Planner</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <style>
+    :root { --ink:#1d2433; --muted:#5b6475; --line:#e3e7ee; --accent:#0b6bcb; --bg:#f6f8fb; --good:#127a3e; }
+    * { box-sizing: border-box; }
+    body { margin:0; font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; color:var(--ink); background:var(--bg); }
+    header { padding:12px 16px; background:#fff; border-bottom:1px solid var(--line); display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+    header h1 { font-size:16px; margin:0 12px 0 0; }
+    form { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+    input[type=text] { padding:7px 10px; border:1px solid var(--line); border-radius:6px; min-width:200px; font:inherit; }
+    button { padding:7px 14px; border:0; border-radius:6px; background:var(--accent); color:#fff; font:inherit; cursor:pointer; }
+    label.chk { color:var(--muted); display:flex; gap:4px; align-items:center; }
+    main { display:grid; grid-template-columns: 360px 1fr; height: calc(100vh - 58px); }
+    aside { overflow:auto; background:#fff; border-right:1px solid var(--line); padding:16px; }
+    #map { height:100%; }
+    .stats { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:16px; }
+    .stat { border:1px solid var(--line); border-radius:8px; padding:10px; }
+    .stat b { display:block; font-size:18px; }
+    .stat span { color:var(--muted); font-size:12px; }
+    .stat.total b { color:var(--good); }
+    ol { padding:0; margin:0; list-style:none; }
+    li.stop { border:1px solid var(--line); border-radius:8px; padding:10px; margin-bottom:8px; cursor:pointer; }
+    li.stop:hover { border-color:var(--accent); }
+    li.stop .n { display:inline-block; width:22px; height:22px; border-radius:50%; background:var(--accent); color:#fff; text-align:center; font-weight:600; font-size:12px; line-height:22px; margin-right:6px; }
+    .muted { color:var(--muted); font-size:12px; }
+    .error { background:#fdecec; color:#9b1c1c; border:1px solid #f5c2c2; padding:10px; border-radius:8px; }
+    .pin { background:var(--accent); color:#fff; border:2px solid #fff; border-radius:50%; width:26px; height:26px; text-align:center; line-height:22px; font-weight:700; box-shadow:0 1px 4px rgba(0,0,0,.4); }
+    .ac { position:relative; }
+    .ac input { min-width:240px; }
+    .ac-list { position:absolute; z-index:2000; top:calc(100% + 4px); left:0; right:0; margin:0; padding:4px 0; list-style:none;
+               background:#fff; border:1px solid var(--line); border-radius:8px; box-shadow:0 8px 24px rgba(16,24,40,.14); max-height:320px; overflow:auto; }
+    .ac-list li { padding:7px 12px; cursor:pointer; display:flex; justify-content:space-between; gap:12px; }
+    .ac-list li[aria-selected=true], .ac-list li:hover { background:#eef5fd; }
+    .ac-list li .st { color:var(--muted); font-size:12px; white-space:nowrap; }
+    .ac-list li.empty { color:var(--muted); cursor:default; background:none; }
+    @media (max-width: 800px) { main { grid-template-columns:1fr; grid-template-rows: 55vh auto; height:auto; } #map { height:55vh; order:-1; } aside { border-right:0; } }
+  </style>
+</head>
+<body>
+<header>
+  <h1>⛽ Fuel Route Planner</h1>
+  <form method="get">
+    <div class="ac">
+      <input type="text" name="start" id="start" placeholder="Start: type a city, e.g. Chi…" value="{{ form.start|default:'' }}"
+             autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="start-list" required>
+      <ul class="ac-list" id="start-list" role="listbox" hidden></ul>
+    </div>
+    <div class="ac">
+      <input type="text" name="finish" id="finish" placeholder="Finish: type a city, e.g. Den…" value="{{ form.finish|default:'' }}"
+             autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="finish-list" required>
+      <ul class="ac-list" id="finish-list" role="listbox" hidden></ul>
+    </div>
+    <label class="chk"><input type="checkbox" name="start_full" value="true" {% if form.start_full %}checked{% endif %}> start with full tank</label>
+    <button type="submit">Plan route</button>
+  </form>
+</header>
+<main>
+  <aside>
+    {% if error %}
+      <div class="error">{{ error }}</div>
+    {% elif plan %}
+      <p><b>{{ plan.start.label }}</b> → <b>{{ plan.finish.label }}</b></p>
+      <div class="stats">
+        <div class="stat total"><b>${{ plan.fuel_summary.total_fuel_cost|floatformat:2 }}</b><span>total fuel cost</span></div>
+        <div class="stat"><b>{{ plan.route.distance_miles }} mi</b><span>{{ plan.route.duration_hours }} h driving</span></div>
+        <div class="stat"><b>{{ plan.fuel_summary.total_gallons }} gal</b><span>at {{ plan.vehicle.miles_per_gallon|floatformat:0 }} MPG</span></div>
+        <div class="stat"><b>{{ plan.fuel_summary.number_of_stops }}</b><span>fuel stops ({{ plan.vehicle.range_miles|floatformat:0 }} mi range)</span></div>
+      </div>
+      {% for note in plan.notes %}<p class="muted">ℹ️ {{ note }}</p>{% endfor %}
+      <ol>
+        {% for s in plan.fuel_stops %}
+        <li class="stop" data-i="{{ forloop.counter0 }}">
+          <span class="n">{{ s.stop_number }}</span><b>{{ s.name }}</b><br>
+          <span class="muted">{{ s.address }}, {{ s.city }}, {{ s.state }}</span><br>
+          Mile {{ s.mile_marker }} · <b>${{ s.price_per_gallon }}</b>/gal · {{ s.gallons_purchased }} gal · <b>${{ s.cost|floatformat:2 }}</b>
+        </li>
+        {% empty %}
+        <li class="muted">No fuel needed for this trip.</li>
+        {% endfor %}
+      </ol>
+      <p class="muted">{{ plan.meta.stations_in_corridor }} stations within {{ plan.meta.corridor_miles|floatformat:0 }} mi of the route ·
+        {{ plan.meta.external_api_calls }} routing API call(s){% if plan.meta.route_cached %} (cached){% endif %} · {{ plan.meta.response_time_ms }} ms</p>
+    {% else %}
+      <p>Enter a start and a finish anywhere in the USA. The planner picks the cheapest places to refuel, assuming a 500-mile range at 10 MPG.</p>
+      <p class="muted">JSON API: <code>POST /api/route/</code> with <code>{"start": "...", "finish": "..."}</code></p>
+    {% endif %}
+  </aside>
+  <div id="map"></div>
+</main>
+{{ plan|json_script:"plan-data" }}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+  // --- City autocomplete: suggestions come from /api/places/ (offline gazetteer, no external calls).
+  function autocomplete(input, onPick) {
+    const list = document.getElementById(input.getAttribute('aria-controls'));
+    const cache = new Map();
+    let items = [], active = -1, timer = null, seq = 0;
+
+    const close = () => { list.hidden = true; input.setAttribute('aria-expanded', 'false'); active = -1; };
+    const highlight = (i) => {
+      active = i;
+      [...list.children].forEach((li, j) => li.setAttribute('aria-selected', String(j === i)));
+      if (i >= 0) list.children[i].scrollIntoView({ block: 'nearest' });
+    };
+    const pick = (item) => { input.value = item.label; close(); onPick && onPick(item); };
+
+    function render(results, typed) {
+      list.replaceChildren();
+      items = results;
+      if (!results.length) {
+        const li = document.createElement('li');
+        li.className = 'empty';
+        li.textContent = 'No matching US city';
+        list.append(li);
+      }
+      results.forEach((r, i) => {
+        const li = document.createElement('li');
+        li.id = `${list.id}-${i}`;
+        li.setAttribute('role', 'option');
+        const name = document.createElement('span');
+        const n = Math.min(typed.length, r.name.length);
+        if (r.name.slice(0, n).toLowerCase() === typed.slice(0, n).toLowerCase()) {
+          const b = document.createElement('b');          // bold the part already typed
+          b.textContent = r.name.slice(0, n);
+          name.append(b, r.name.slice(n));
+        } else {
+          name.textContent = r.name;
+        }
+        const st = document.createElement('span');
+        st.className = 'st';
+        st.textContent = r.state;
+        li.append(name, st);
+        li.addEventListener('mousedown', (e) => { e.preventDefault(); pick(r); });  // before blur fires
+        list.append(li);
+      });
+      list.hidden = false;
+      input.setAttribute('aria-expanded', 'true');
+      highlight(results.length ? 0 : -1);
+    }
+
+    async function lookup() {
+      const q = input.value.trim();
+      if (!q) return close();
+      const mine = ++seq;
+      let results = cache.get(q.toLowerCase());
+      if (!results) {
+        try {
+          const resp = await fetch(`/api/places/?q=${encodeURIComponent(q)}&limit=8`);
+          results = resp.ok ? (await resp.json()).results : [];
+        } catch { results = []; }
+        cache.set(q.toLowerCase(), results);
+      }
+      if (mine === seq && document.activeElement === input) render(results, q.split(',')[0].trim());
+    }
+
+    input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(lookup, 120); });
+    input.addEventListener('focus', () => { if (input.value.trim() && !items.length) lookup(); });
+    input.addEventListener('blur', close);
+    input.addEventListener('keydown', (e) => {
+      if (list.hidden) return;
+      if (e.key === 'Escape') { close(); return; }
+      if (!items.length) return;
+      if (e.key === 'ArrowDown') { e.preventDefault(); highlight((active + 1) % items.length); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); highlight((active - 1 + items.length) % items.length); }
+      else if (e.key === 'Enter' && active >= 0) { e.preventDefault(); pick(items[active]); }
+      else return;
+      input.setAttribute('aria-activedescendant', active >= 0 ? `${list.id}-${active}` : '');
+    });
+  }
+  const startInput = document.getElementById('start'), finishInput = document.getElementById('finish');
+  autocomplete(startInput, () => { if (!finishInput.value) finishInput.focus(); });
+  autocomplete(finishInput);
+
+  const plan = JSON.parse(document.getElementById('plan-data').textContent);
+  const map = L.map('map').setView([39.5, -98.35], 4);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    referrerPolicy: 'strict-origin-when-cross-origin',  // OSM tile policy requires a Referer
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  }).addTo(map);
+
+  if (plan) {
+    const line = L.geoJSON(plan.route.geometry, { style: { color: '#0b6bcb', weight: 5, opacity: 0.8 } }).addTo(map);
+    const endpoint = (loc, color, title) => L.circleMarker([loc.lat, loc.lon], {
+      radius: 9, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1
+    }).addTo(map).bindPopup(`<b>${title}</b><br>${loc.label}`);
+    endpoint(plan.start, '#127a3e', 'Start');
+    endpoint(plan.finish, '#b42318', 'Finish');
+
+    const markers = plan.fuel_stops.map(s => L.marker([s.lat, s.lon], {
+      icon: L.divIcon({ className: '', html: `<div class="pin">${s.stop_number}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] })
+    }).addTo(map).bindPopup(
+      `<b>${s.stop_number}. ${s.name}</b><br>${s.address}<br>${s.city}, ${s.state}<br>` +
+      `Mile ${s.mile_marker} &middot; $${s.price_per_gallon}/gal<br>` +
+      `Buy ${s.gallons_purchased} gal &rarr; <b>$${s.cost.toFixed(2)}</b>`
+    ));
+    map.fitBounds(line.getBounds(), { padding: [30, 30] });
+    document.querySelectorAll('li.stop').forEach(li => li.addEventListener('click', () => {
+      const m = markers[+li.dataset.i];
+      map.setView(m.getLatLng(), 11);
+      m.openPopup();
+    }));
+  }
+</script>
+</body>
+</html>
