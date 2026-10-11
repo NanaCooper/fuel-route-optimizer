@@ -1,0 +1,22 @@
+[project]
+name = "fuel-route-optimizer"
+version = "1.0.0"
+description = "Django API: route between two US locations with cost-optimal fuel stops."
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["routing/migrations"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "PIE", "RET", "RUF"]
+ignore = [
+    "RUF012",  # Django's Meta.ordering / Meta.indexes are plain class-level lists by convention
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["fuel_route", "routing"]
+
+[tool.ruff.format]
+quote-style = "single"

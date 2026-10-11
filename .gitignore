@@ -1,0 +1,10 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+db.sqlite3
+.env
+.idea/
+.vscode/
+LOOM_NOTES.md
+.cache/
